@@ -3,7 +3,7 @@
 export const PHYS = {
   g: 22,            // gravity, u/s^2
   vmax: 9.2,        // full-power jump velocity, u/s
-  minPow: 0.62,     // power factor at the bottom of the purr
+  minPow: 0.70,     // power factor at the bottom of the purr (cozy floor - off-beat taps still respectable)
   purrfectPow: 1.12,// power factor inside the PURRFECT window
   purrfectWin: 0.110, // seconds around the purr peak that count as PURRFECT
   coyote: 0.12,     // coyote time after running off an edge
