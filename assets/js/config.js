@@ -29,8 +29,8 @@ export const PHYS = {
   lowCeil: -7,      // soft ceiling (world y, negative is up) - never reached in play
 };
 
-// Purr cycle: peak every 2 beats. phase() in [0,1], 1 at the peak.
-export const purrPeriod = (bpm) => 240 / bpm;
+// Purr cycle: peak every 2 beats (full swell-and-fade = 2 beats). phase() in [0,1], 1 at the peak.
+export const purrPeriod = (bpm) => 120 / bpm;
 export const purrPhase = (t, bpm) => 0.5 - 0.5 * Math.cos((2 * Math.PI * t) / purrPeriod(bpm));
 // Time (within a cycle) to the nearest purr peak.
 export function timeToPeak(t, bpm) {

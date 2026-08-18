@@ -89,15 +89,26 @@ export class Game {
   }
 
   // ---------- purr ----------
-  purrInfo() {
+  purrInfo(back = 0) {
     const clock = this.audio.purrClock();
     const bpm = clock ? clock.bpm : this.district.bpm;
-    const t = clock ? clock.t : this.t;
+    const t = (clock ? clock.t : this.t) - back;
     const P = purrPeriod(bpm);
     const tc = ((t % P) + P) % P;
     const phase = 0.5 - 0.5 * Math.cos((2 * Math.PI * t) / P);
     const toPeak = Math.abs(tc - P / 2);
     return { phase, purrfect: toPeak <= PHYS.purrfectWin, P };
+  }
+
+  // players react ~150ms late: judge a tap by the best purr moment it was aimed at
+  purrJudge() {
+    let best = this.purrInfo(0);
+    for (const back of [0.08, 0.16]) {
+      const p = this.purrInfo(back);
+      if (p.purrfect && !best.purrfect) best = p;
+      else if (p.phase > best.phase && !best.purrfect) best = p;
+    }
+    return best;
   }
 
   // ---------- input ----------
@@ -115,7 +126,7 @@ export class Game {
       this._burst(c.x, c.y - 0.5, 4, 'spark', '#cfe4ff');
     } else {
       // second tap while diving: buffered jump for the instant of landing
-      const { phase, purrfect } = this.purrInfo();
+      const { phase, purrfect } = this.purrJudge();
       c.bufferF = purrfect ? PHYS.purrfectPow : powerFor(phase);
       c.bufferPurrfect = purrfect;
       c.bufferT = PHYS.buffer;
@@ -128,7 +139,7 @@ export class Game {
     if (c.mossOn) { this.audio.denied(); this._float(c.x, c.y - 1.6, '!', '#9fe0b7'); return; }
     let f, purrfect;
     if (fromBuffer && c.bufferF !== null) { f = c.bufferF; purrfect = c.bufferPurrfect; c.bufferF = null; }
-    else { const info = this.purrInfo(); purrfect = info.purrfect; f = purrfect ? PHYS.purrfectPow : powerFor(info.phase); }
+    else { const info = this.purrJudge(); purrfect = info.purrfect; f = purrfect ? PHYS.purrfectPow : powerFor(info.phase); }
     c.vy = -jumpVel(f);
     c.grounded = false; c.plat = null; c.coyote = 0; c.diving = false;
     c.stumbleT = 0; // shake it off
