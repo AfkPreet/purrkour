@@ -1,2 +1,2 @@
-https://purrkour-play-dp3emwqvh-preet-s-team.vercel.app/
-https://purrkour-play-preet-s-team.vercel.app/
+https://raw.githack.com/AfkPreet/purrkour/claude/purrkour-mobile-game-bqelb8/index.html
+https://afkpreet.github.io/purrkour/
