@@ -1,2 +1,5 @@
 https://raw.githack.com/AfkPreet/purrkour/claude/purrkour-mobile-game-bqelb8/index.html
+https://raw.githack.com/AfkPreet/purrkour/claude/purrkour-mobile-game-bqelb8/assets/js/main.js
+https://raw.githack.com/AfkPreet/purrkour/claude/purrkour-mobile-game-bqelb8/og.png
+https://raw.githack.com/AfkPreet/purrkour/claude/purrkour-mobile-game-bqelb8/manifest.webmanifest
 https://afkpreet.github.io/purrkour/

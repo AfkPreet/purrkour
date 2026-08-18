@@ -13,8 +13,6 @@ jobs:
         run: |
           while IFS= read -r url; do
             [ -z "$url" ] && continue
-            code=$(curl -s -o body.html -w '%{http_code}' -L --max-time 30 "$url")
-            echo "PROBE $url -> HTTP $code"
-            echo "  TITLE: $(grep -o '<title>[^<]*</title>' body.html | head -1)"
-            echo "  BYTES: $(wc -c < body.html)"
+            out=$(curl -s -o body.out -w '%{http_code} %{content_type}' -L --max-time 30 "$url")
+            echo "PROBE $url -> $out ($(wc -c < body.out) bytes)"
           done < tools/probe-urls.txt
