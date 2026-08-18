@@ -76,8 +76,10 @@ export class AudioEngine {
   _startPurr() {
     const src = this._noiseSrc();
     const lp = this.ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 150; lp.Q.value = 0.8;
+    this.purrLp = lp;
     const am = this.ctx.createGain(); am.gain.value = 0.5;
     const lfo = this.ctx.createOscillator(); lfo.frequency.value = 25;
+    this.purrLfo = lfo;
     const depth = this.ctx.createGain(); depth.gain.value = 0.5;
     lfo.connect(depth); depth.connect(am.gain);
     this.purrGain = this.ctx.createGain(); this.purrGain.gain.value = 0;
@@ -85,11 +87,17 @@ export class AudioEngine {
     src.start(); lfo.start();
   }
 
-  // called every frame with the purr phase [0..1]; the purr is audible even in menus
-  setPurr(level) {
+  // called every frame with the purr phase [0..1]; the purr is audible even in menus.
+  // milk=true makes the purr slower and deeper (Moon Milk dream state).
+  setPurr(level, milk = false) {
     if (!this.ctx || !this.purrGain) return;
     const v = this.sound ? level * 0.16 : 0;
     this.purrGain.gain.setTargetAtTime(v, this.ctx.currentTime, 0.05);
+    if (milk !== this._milkPurr) {
+      this._milkPurr = milk;
+      this.purrLfo?.frequency.setTargetAtTime(milk ? 17 : 25, this.ctx.currentTime, 0.2);
+      this.purrLp?.frequency.setTargetAtTime(milk ? 100 : 150, this.ctx.currentTime, 0.2);
+    }
   }
 
   setSound(on) { this.sound = on; if (this.sfxBus) this.sfxBus.gain.setTargetAtTime(on ? 0.6 : 0, this.ctx.currentTime, 0.03); }
@@ -110,9 +118,12 @@ export class AudioEngine {
     this.bpm = m.bpm;
     const tick = () => {
       if (!this._timer) return;
-      const ahead = this.ctx.currentTime + 0.28;
-      while (this._nextNote < ahead) { this._schedule(this._nextNote, this._step, m); this._step++; this._nextNote += 30 / m.bpm; } // 8th notes
-      if (mood === 'title' && this._rnd() < 0.02) this._cricket(this.ctx.currentTime + this._rnd());
+      const ahead = this.ctx.currentTime + 0.5;
+      while (this._nextNote < ahead) {
+        if (this.music) this._schedule(this._nextNote, this._step, m); // muted: keep the clock, skip the synth
+        this._step++; this._nextNote += 30 / m.bpm; // 8th notes
+      }
+      if (mood === 'title' && this.music && this._rnd() < 0.02) this._cricket(this.ctx.currentTime + this._rnd());
     };
     this._timer = setInterval(tick, 90);
     tick();
@@ -185,10 +196,12 @@ export class AudioEngine {
     }
   }
 
-  // beat-synced purr: seconds until the next purr peak (peak every 2 beats, offset 1 beat)
+  // beat-synced purr clock. Falls back to null (game time) when the context is not
+  // actually running, and compensates for output latency so timing-by-ear is fair.
   purrClock() {
-    if (!this.ctx || !this._timer) return null;
-    return { t: this.ctx.currentTime - this.musicStartTime, bpm: this.bpm };
+    if (!this.ctx || !this._timer || this.ctx.state !== 'running') return null;
+    const lat = this.ctx.outputLatency || this.ctx.baseLatency || 0;
+    return { t: this.ctx.currentTime - this.musicStartTime - lat, bpm: this.bpm };
   }
 
   // ---------- SFX ----------
@@ -224,6 +237,7 @@ export class AudioEngine {
     this._sfxOsc('sine', f * 2, f * 2, t, 0.005, 0.09, 0.06);
   }
   sparkleFish() { const t = this.now; [523, 659, 784, 1046, 1318].forEach((f, i) => this._sfxOsc('sine', f, f, t + i * 0.06, 0.008, 0.3, 0.14)); }
+  sparkleNear() { const t = this.now; this._sfxOsc('sine', 1046, 1046, t, 0.01, 0.4, 0.07); this._sfxOsc('sine', 1568, 1568, t + 0.12, 0.01, 0.5, 0.055); }
   pop() { const t = this.now; this._sfxOsc('square', 400, 900, t, 0.004, 0.05, 0.12); this._sfxNoise('bandpass', 2000, 1, t, 0.004, 0.05, 0.1); }
   milk() { const t = this.now; [349, 440, 523].forEach((f, i) => this._sfxOsc('sine', f, f * 1.5, t + i * 0.05, 0.15, 0.7, 0.08)); }
   bellPickup() { const t = this.now; this._sfxOsc('sine', 1568, 1568, t, 0.005, 0.6, 0.15); this._sfxOsc('sine', 2349, 2349, t + 0.02, 0.005, 0.4, 0.08); }

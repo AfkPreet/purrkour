@@ -22,6 +22,15 @@ let storySeq = [], storyIdx = 0, storyT = 0;
 
 const skinById = (id) => SKINS.find((s) => s.id === id) || SKINS[0];
 
+// A pointerdown that swaps screens must eat the same tap's trailing click, or the
+// click lands on whatever button appears under the finger (ghost click).
+function swallowNextClick() {
+  const stop = (e) => { e.preventDefault(); e.stopPropagation(); cleanup(); };
+  const cleanup = () => { document.removeEventListener('click', stop, true); clearTimeout(tid); };
+  document.addEventListener('click', stop, true);
+  const tid = setTimeout(cleanup, 500);
+}
+
 // ---------- game events ----------
 const game = new Game(audio, {
   onCoin(run) {
@@ -29,15 +38,25 @@ const game = new Game(audio, {
     const chip = $('coin-chip');
     chip.classList.remove('squish'); void chip.offsetWidth; chip.classList.add('squish');
   },
-  onProgress(f) { $('moonbar-fill').style.width = `${Math.round(f * 100)}%`; },
-  onDistance(m) { $('dist-chip').textContent = `${m} m`; },
+  onProgress(f) {
+    const pct = Math.round(f * 100);
+    if (pct === lastPct) return;
+    lastPct = pct;
+    $('moonbar-fill').style.width = `${pct}%`;
+  },
+  onDistance(m) {
+    if (m === lastDist) return;
+    lastDist = m;
+    const best = Math.max(save.endlessBest, m);
+    $('dist-chip').innerHTML = `${m} m<small style="display:block;font-size:12px;opacity:0.75">BEST ${best} m${m > save.endlessBest && save.endlessBest > 0 ? ' &#9733;' : ''}</small>`;
+  },
   onTutorial(id) { showTut([null, STR.tut1, STR.tut2, STR.tut3][id]); },
   onSparkle() {},
   onPower() {},
   onStarSave() {},
   onFlopStart() { hide('hud'); },
   onFlopDone(fromTap) {
-    if (fromTap) { restartRun(); return; }
+    if (fromTap) { bankRun(); restartRun(); return; }
     if (!$('flop-card').classList.contains('hidden')) return;
     if (game.endless) {
       $('flop-line').textContent = FLOP_LINES[Math.floor(Math.random() * FLOP_LINES.length)];
@@ -57,22 +76,28 @@ game.skin = skinById(save.skin);
 // ---------- helpers ----------
 function show(id) { $(id).classList.remove('hidden'); }
 function hide(id) { $(id).classList.add('hidden'); }
-function hideAllScreens() { for (const id of ['title', 'map', 'shop', 'story', 'clear-card', 'flop-card', 'pause-card', 'hud']) hide(id); }
+function hideAllScreens() { for (const id of ['title', 'map', 'shop', 'story', 'clear-card', 'flop-card', 'pause-card', 'hud', 'tut']) hide(id); }
 
+let lastPct = -1, lastDist = -1;
+
+// idempotent: the run's counters are zeroed once banked, so overlapping paths
+// (flop card + pause + leave, tap-retry, clear) can all call this safely
 function bankRun() {
-  if (game.coinsRun > 0) { save.coins += game.coinsRun; }
+  if (game.coinsRun > 0) { save.coins += game.coinsRun; game.coinsRun = 0; }
   if (game.sparkleFound && !game.endless) save.sparkles[game.levelIndex] = true;
   if (game.endless) save.endlessBest = Math.max(save.endlessBest, game.distance);
   save.totalPurrfects += game.purrfects || 0;
+  game.purrfects = 0;
   persist();
 }
 
-function startLevel(i) {
+function startLevel(i, fresh = true) {
   hideAllScreens();
   clearTimeout(flopTimer);
+  clearTimeout(tutTimer);
   screen = 'play'; paused = false;
   game.skin = skinById(save.skin);
-  game.startLevel(i);
+  game.startLevel(i, fresh);
   $('level-chip').textContent = `${i + 1} - ${LEVEL_NAMES[i]}`;
   $('coin-count').textContent = '0';
   $('moonbar-fill').style.width = '0%';
@@ -80,12 +105,14 @@ function startLevel(i) {
   audio.startMusic(Math.min(3, Math.floor(i / 5)));
 }
 
-function startEndless() {
+function startEndless(fresh = true) {
   hideAllScreens();
   clearTimeout(flopTimer);
+  clearTimeout(tutTimer);
   screen = 'play'; paused = false;
+  lastDist = -1;
   game.skin = skinById(save.skin);
-  game.startEndless();
+  game.startEndless(fresh);
   $('level-chip').textContent = STR.endlessName;
   $('coin-count').textContent = '0';
   $('moonbar').classList.add('hidden');
@@ -94,29 +121,31 @@ function startEndless() {
 }
 
 function restartRun() {
+  if (document.hidden) { clearTimeout(flopTimer); flopTimer = setTimeout(restartRun, 600); return; }
   clearTimeout(flopTimer);
   hide('flop-card');
-  if (game.endless) startEndless();
-  else startLevel(game.levelIndex);
+  if (game.endless) startEndless(false);
+  else startLevel(game.levelIndex, false);
 }
 
 function onLevelCleared() {
   const i = game.levelIndex;
+  const stats = { coins: game.coinsRun, purrfects: game.purrfects, sparkle: game.sparkleFound };
   bankRun();
-  const first = save.cleared <= i;
   save.cleared = Math.max(save.cleared, i + 1);
   if (i === 19) save.endlessUnlocked = true;
   persist();
   const showCard = () => {
+    screen = 'play';
     $('clear-stats').innerHTML =
-      `Fish Coins +${game.coinsRun}<br>Purrfects ${game.purrfects}` +
-      (game.sparkleFound ? `<br><span class="pink">${STR.sparkleFound}</span>` : '');
+      `Fish Coins +${stats.coins}<br>Purrfects ${stats.purrfects}` +
+      (stats.sparkle ? `<br><span class="pink">${STR.sparkleFound}</span>` : '');
     $('next-btn').textContent = i === 19 ? (save.endlessUnlocked ? STR.endlessName : STR.map) : STR.next;
     show('clear-card');
     audio.levelClear();
   };
   if (i === 9 && !save.storySeen.half) { save.storySeen.half = true; persist(); runStory([3], showCard); }
-  else if (i === 19 && !save.storySeen.end) { save.storySeen.end = true; persist(); runStory([4], () => { showTutText(STR.endlessUnlocked, 4000); showCard(); }); }
+  else if (i === 19 && !save.storySeen.end) { save.storySeen.end = true; persist(); runStory([4], () => { showCard(); showTutText(STR.endlessUnlocked, 4000); }); }
   else showCard();
 }
 
@@ -130,9 +159,11 @@ function runStory(indices, done) {
   show('story');
 }
 function advanceStory() {
+  if (screen !== 'story' || storyIdx >= storySeq.length) return;
   storyIdx++;
   if (storyIdx >= storySeq.length) {
     hide('story');
+    screen = 'play';
     const done = pendingAfterStory; pendingAfterStory = null;
     done?.();
   } else {
@@ -267,11 +298,20 @@ function openShop() {
 // ---------- pause ----------
 function pauseGame() {
   if (screen !== 'play' || paused) return;
+  // nothing to pause while a result card is up; also keeps the flop timer honest
+  if (!$('flop-card').classList.contains('hidden') || !$('clear-card').classList.contains('hidden')) return;
+  clearTimeout(flopTimer);
   paused = true;
+  audio.setPurr(0);
   show('pause-card');
 }
 function resumeGame() { paused = false; hide('pause-card'); }
 function leaveLevel() {
+  // leaving during the clear celebration still counts as clearing the level
+  if (!game.endless && game.mode === 'clear') {
+    save.cleared = Math.max(save.cleared, game.levelIndex + 1);
+    if (game.levelIndex === 19) save.endlessUnlocked = true;
+  }
   bankRun();
   paused = false;
   openTitle();
@@ -280,7 +320,7 @@ function leaveLevel() {
 // ---------- input ----------
 function gameTap() {
   audio.unlock();
-  if (screen === 'story') { audio.tapUI(); advanceStory(); return; }
+  if (screen === 'story') { audio.tapUI(); swallowNextClick(); advanceStory(); return; }
   if (screen !== 'play' || paused) return;
   game.tap();
 }
@@ -288,13 +328,13 @@ document.addEventListener('pointerdown', (e) => {
   audio.unlock();
   if (audio.ctx && screen === 'title' && !audio.mood) audio.startMusic('title');
   if (e.target.closest('button')) return;
-  if (screen === 'play' && !$('flop-card').classList.contains('hidden')) { restartRun(); return; }
+  if (screen === 'play' && !$('flop-card').classList.contains('hidden')) { swallowNextClick(); restartRun(); return; }
   if (screen === 'play' && !$('clear-card').classList.contains('hidden')) return;
   gameTap();
 });
 document.addEventListener('keydown', (e) => {
   if (e.repeat) return;
-  if (e.code === 'Space' || e.code === 'ArrowUp') {
+  if ((e.code === 'Space' || e.code === 'ArrowUp') && (screen === 'play' || screen === 'story') && !e.target.closest?.('button')) {
     e.preventDefault();
     if (screen === 'play' && !$('flop-card').classList.contains('hidden')) { restartRun(); return; }
     gameTap();
@@ -359,12 +399,23 @@ resize();
 }
 
 let last = performance.now();
+let pausedFrameDrawn = false;
+let sizeCheck = 0;
 function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
-  if (!paused) game.update(dt);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  game.render(ctx, W, H);
+  // self-heal canvas size (iOS rotation can fire resize with stale dimensions)
+  if (++sizeCheck > 30) {
+    sizeCheck = 0;
+    if (window.innerWidth !== W || window.innerHeight !== H) resize();
+  }
+  if (!paused) { game.update(dt); pausedFrameDrawn = false; }
+  const covered = screen === 'map' || screen === 'shop' || screen === 'story';
+  if (!covered && !(paused && pausedFrameDrawn)) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    game.render(ctx, W, H);
+    if (paused) pausedFrameDrawn = true;
+  }
   if (screen === 'story') {
     storyT += dt;
     const sc = $('story-canvas');

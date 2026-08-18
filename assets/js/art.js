@@ -31,11 +31,28 @@ export function starPath(ctx, x, y, r) {
   }
   ctx.closePath();
 }
+// glow uses pre-rendered sprites (a fresh radial gradient per call is too hot for phones)
+const glowCache = new Map();
+function glowSprite(color) {
+  let c = glowCache.get(color);
+  if (!c) {
+    if (glowCache.size > 48) glowCache.clear();
+    c = document.createElement('canvas');
+    c.width = c.height = 64;
+    const g2 = c.getContext('2d');
+    const grad = g2.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grad.addColorStop(0, color);
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    g2.fillStyle = grad; g2.fillRect(0, 0, 64, 64);
+    glowCache.set(color, c);
+  }
+  return c;
+}
 export function glow(ctx, x, y, r, color, alpha) {
-  const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-  g.addColorStop(0, color);
-  g.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.save(); ctx.globalAlpha = alpha; ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2); ctx.restore();
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.drawImage(glowSprite(color), x - r, y - r, r * 2, r * 2);
+  ctx.restore();
 }
 const h32 = (n) => { let x = (n | 0) ^ 0x9e3779b9; x = Math.imul(x ^ (x >>> 16), 0x85ebca6b); x = Math.imul(x ^ (x >>> 13), 0xc2b2ae35); return ((x ^ (x >>> 16)) >>> 0) / 4294967296; };
 
@@ -113,11 +130,11 @@ export function drawSkyline(ctx, W, H, d, camX, layer) {
 // ---------- platforms (buildings + roofs) ----------
 export function drawPlatform(ctx, px, py, pw, u, p, d, t, camBottom) {
   const wallH = camBottom - py + 10;
-  // wall
-  const wg = ctx.createLinearGradient(0, py, 0, py + Math.max(wallH, 1));
-  wg.addColorStop(0, d.wall); wg.addColorStop(1, shade(d.wall, -18));
-  ctx.fillStyle = wg;
+  // wall: two flat fills instead of a per-frame gradient
+  ctx.fillStyle = d.wall;
   ctx.fillRect(px + 2, py + u * 0.12, pw - 4, wallH);
+  ctx.fillStyle = shade(d.wall, -14);
+  ctx.fillRect(px + 2, py + u * 0.12 + wallH * 0.55, pw - 4, wallH * 0.45);
   // windows on the wall
   const cols = Math.max(1, Math.floor(pw / (u * 1.1)));
   const rows = Math.min(6, Math.max(1, Math.floor(wallH / (u * 1.3))));
@@ -424,9 +441,9 @@ export function drawCoin(ctx, x, y, u, t, sparkle, id) {
   const r = sparkle ? u * 0.34 : u * 0.24;
   y += bob;
   if (sparkle) {
-    const hue = (t * 90) % 360;
+    const hue = Math.round(((t * 90) % 360) / 30) * 30; // quantized so glow sprites cache
     glow(ctx, x, y, r * 3, `hsla(${hue},90%,70%,0.7)`, 0.6);
-    ctx.fillStyle = `hsl(${hue},85%,72%)`;
+    ctx.fillStyle = `hsl(${(t * 90) % 360},85%,72%)`;
   } else {
     glow(ctx, x, y, r * 2, 'rgba(255,217,138,0.5)', 0.4);
     ctx.fillStyle = '#ffd98a';

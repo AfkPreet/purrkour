@@ -32,15 +32,15 @@ export class Game {
     this.particles = []; this.floats = [];
   }
 
-  startLevel(index) {
+  startLevel(index, fresh = true) {
     this.levelIndex = index;
     this.endless = false;
     this.level = compileLevel(index);
     this.district = this.level.district;
-    this._resetRun();
+    this._resetRun(fresh);
   }
 
-  startEndless() {
+  startEndless(fresh = true) {
     this.endless = true;
     this.levelIndex = -1;
     this.endlessChunks = 0;
@@ -50,14 +50,16 @@ export class Game {
     this.level.goalX = Infinity;
     this.district = DISTRICTS[0];
     this._lastChunkEnd = first.length;
-    this._resetRun();
+    this._resetRun(fresh);
   }
 
-  _resetRun() {
-    this.mode = 'play';
+  _resetRun(fresh = false) {
+    // a fresh level entry opens with Mochi loafing beside the GO lantern; retries skip it
+    this.mode = fresh ? 'ready' : 'play';
+    this.readyT = 0;
     this.t = 0;
     for (const p of this.level.platforms) { p.crumbleT = -1; p.fallY = 0; }
-    for (const c of this.level.coins) { c.taken = false; c.fx = 0; c.fy = 0; c.dx = 0; c.dy = 0; }
+    for (const c of this.level.coins) { c.taken = false; c.hinted = false; c.fx = 0; c.fy = 0; c.dx = 0; c.dy = 0; }
     for (const o of this.level.obstacles) { o.hit = false; o.hitT = 0; }
     for (const pw of this.level.powerups) pw.taken = false;
     const p0 = this.level.platforms[0];
@@ -101,6 +103,7 @@ export class Game {
   // ---------- input ----------
   tap() {
     if (this.mode === 'flop') { this.ev.onFlopDone?.(true); return; }
+    if (this.mode === 'ready') { this._beginRun(); return; }
     if (this.mode !== 'play') return;
     const c = this.cat;
     if (c.grounded || c.coyote > 0) {
@@ -151,7 +154,18 @@ export class Game {
     this.acc += Math.min(dt, 0.1);
     while (this.acc >= STEP) { this.acc -= STEP; this._step(STEP); }
     const { phase } = this.purrInfo();
-    this.audio.setPurr(this.mode === 'play' || this.mode === 'title' ? phase : 0);
+    const audible = this.mode === 'play' || this.mode === 'title' || this.mode === 'ready';
+    this.audio.setPurr(audible ? phase : 0, this.milkT > 0);
+  }
+
+  _beginRun() {
+    if (this.mode !== 'ready') return;
+    this.mode = 'play';
+    const c = this.cat;
+    c.loaf = false;
+    c.happy = 0.7;
+    this._pop(c.x + 0.9, c.y - 1.2, 'heart'); // the GO lantern boop
+    this.audio.goalChime();
   }
 
   _step(dt) {
@@ -170,6 +184,13 @@ export class Game {
     if (this.mode === 'title') { this._stepTitle(dt); return; }
     if (this.mode === 'flop') { this._stepFlop(dt); return; }
     if (this.mode === 'clear') { this._stepClear(dt); return; }
+    if (this.mode === 'ready') {
+      this.cat.loaf = true;
+      this.readyT += dt;
+      if (this.readyT > 0.9) this._beginRun();
+      this._camera(dt);
+      return;
+    }
     if (this.mode !== 'play') return;
 
     // timers
@@ -259,6 +280,8 @@ export class Game {
         if (p.fallen) continue;
         if (p.x0 - PHYS.catHW > c.x + 1 || p.x1 + PHYS.catHW < c.x - 1) continue;
         const py = this._platY(p);
+        // movers rise during the step: compare against the surface where it WAS
+        const pyPrev = p.mover ? this._platY(p, this.t - dt) : py;
         const front = c.x + PHYS.catHW;
         if (!c.bonked && front >= p.x0 && front - (S + wind) * dt < p.x0 && c.y > py + 0.12 && prevY > py + 0.12) {
           c.bonked = true; c.x = p.x0 - PHYS.catHW - 0.02; c.vy = Math.max(c.vy, 1.5);
@@ -266,7 +289,7 @@ export class Game {
           this._burst(c.x + 0.3, c.y - 0.5, 6, 'spark', '#c9c5dd');
           navigator.vibrate?.(14);
         }
-        if (c.vy > 0 && prevY <= py && c.y >= py && c.x + PHYS.catHW >= p.x0 && c.x - PHYS.catHW <= p.x1) {
+        if (c.vy > 0 && prevY <= pyPrev && c.y >= py && c.x + PHYS.catHW >= p.x0 && c.x - PHYS.catHW <= p.x1) {
           this._land(p);
           break;
         }
@@ -277,10 +300,10 @@ export class Game {
       if (this.combo > 0 && Math.random() < 0.5) {
         this._trail(c);
       }
-      // fall rescue / flop
-      const bottom = this.cam.y + this._viewH + 1;
-      if (this.bell && c.y > this.groundY + 4 && c.vy > 0) this._starSave();
-      else if (c.y > Math.max(bottom, this.groundY + 7)) this._startFlop();
+      // fall rescue / flop (flop begins while Mochi is still on screen, so the
+      // slow-mo tumble into the laundry cart is actually visible)
+      if (this.bell && c.y > this.groundY + 3.2 && c.vy > 0) this._starSave();
+      else if (c.y > this.groundY + 4.6 && c.vy > 0) this._startFlop();
     }
 
     // coins
@@ -292,10 +315,11 @@ export class Game {
       const d2 = dx * dx + dyy * dyy;
       if (magnet && d2 < PHYS.magnetR * PHYS.magnetR) {
         const d = Math.sqrt(d2) || 1;
-        coin.fx += (dx / d) * 30 * dt; coin.fy += (dyy / d) * 30 * dt;
+        coin.fx = (coin.fx + (dx / d) * 34 * dt) * (1 - 3.5 * dt);
+        coin.fy = (coin.fy + (dyy / d) * 34 * dt) * (1 - 3.5 * dt);
         coin.dx += coin.fx * dt; coin.dy += coin.fy * dt;
       }
-      const rr2 = (coin.sparkle ? 0.62 : PHYS.coinR) ** 2;
+      const rr2 = (coin.sparkle ? 0.62 : magnet ? 0.8 : PHYS.coinR) ** 2;
       if (d2 < rr2) {
         coin.taken = true;
         if (coin.sparkle) {
@@ -311,7 +335,8 @@ export class Game {
           this.coinsRun += mult;
           this.audio.coin(this.comboCoinStep = (this.comboCoinStep || 0) + 1);
           if (mult > 1) this._float(cx, cy - 0.5, `x${mult}!`, '#ffd98a');
-          this._burst(cx, cy, 4, 'spark', '#ffd98a');
+          this._burst(cx, cy, 3, 'spark', '#ffd98a');
+          this.particles.push({ type: 'coinfly', x: cx, y: cy, k: 0, vx: 0, vy: 0, life: 9, max: 9 });
         }
         this.ev.onCoin?.(this.coinsRun);
       }
@@ -333,6 +358,19 @@ export class Game {
       }
     }
 
+    // a soft chime hints when the hidden Sparkle Fish is near
+    for (const coin of this.level.coins) {
+      if (coin.sparkle && !coin.taken && !coin.hinted && coin.x - c.x > 0 && coin.x - c.x < 5) {
+        coin.hinted = true;
+        this.audio.sparkleNear();
+      }
+    }
+
+    // dreamy drifting sparkles while Moon Milk is active
+    if (this.milkT > 0 && Math.random() < dt * 16) {
+      this.particles.push({ type: 'spark', x: this.cam.x + Math.random() * this._viewW, y: this.cam.y + Math.random() * this._viewH, vx: 0, vy: -0.3, life: 1, max: 1, color: '#d8ccff' });
+    }
+
     // tutorial (level 1 only)
     if (this.levelIndex === 0) {
       for (const trig of [{ x: 1.6, id: 1 }, { x: 13, id: 2 }, { x: 25, id: 3 }]) {
@@ -343,7 +381,10 @@ export class Game {
     // goal / endless growth
     if (!this.endless && c.x >= this.level.goalX) {
       this.mode = 'clear'; this.clearT = 0;
-      c.grounded = true; c.happy = 5;
+      const goalPlat = this.level.platforms[this.level.platforms.length - 1];
+      c.grounded = true; c.plat = goalPlat; c.y = this._platY(goalPlat);
+      this.groundY = c.y;
+      c.vy = 0; c.diving = false; c.happy = 5;
       this.audio.goalChime();
     }
     if (this.endless) {
@@ -365,10 +406,11 @@ export class Game {
     this._camera(dt);
   }
 
-  _platY(p) {
+  _platY(p, tOv = null) {
+    const t = tOv === null ? this.t : tOv;
     let y = p.y + (p.fallY || 0);
-    if (p.mover) y += Math.sin((this.t * Math.PI * 2) / p.mover.period + p.i) * p.mover.amp;
-    if (p.crumbleT >= 0 && !p.fallen) y += Math.sin(this.t * 40) * 0.03; // wobble
+    if (p.mover) y += Math.sin((t * Math.PI * 2) / p.mover.period + p.i) * p.mover.amp;
+    if (p.crumbleT >= 0 && !p.fallen) y += Math.sin(t * 40) * 0.03; // wobble
     return y;
   }
 
@@ -436,9 +478,10 @@ export class Game {
     this.flopT = 0;
     this.cat.diving = false;
     this.cat.scarf.length = 0;
+    this.cat.vy = Math.min(this.cat.vy, 2.5); // ease into the slow-mo tumble
     this.audio.flop();
     this.cartX = this.cat.x + 0.6;
-    this.cartY = this.cam.y + this._viewH - 0.6;
+    this.cartY = Math.max(this.cam.y + this._viewH - 0.6, this.cat.y + 3.2);
     this.flopLanded = false;
     this.ev.onFlopStart?.();
   }
@@ -518,6 +561,7 @@ export class Game {
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];
       p.life -= dt;
+      if (p.type === 'coinfly') { p.k += dt * 2.8; if (p.k >= 1) this.particles.splice(i, 1); continue; }
       p.x += p.vx * dt; p.y += p.vy * dt;
       if (p.type === 'dust') { p.vx *= 1 - dt * 3; p.vy -= dt * 1.5; }
       if (p.type === 'feather') { p.vy += dt * 1.2; p.vx = Math.sin(p.life * 6) * 1.2; }
@@ -590,6 +634,10 @@ export class Game {
         const gp = lvl.platforms[lvl.platforms.length - 1];
         art.drawGoal(ctx, sx(lvl.goalX + 0.9), sy(this._platY(gp)), u, this.t, this.levelIndex === 19);
       }
+      // the little GO lantern Mochi boops at level start
+      if ((this.mode === 'ready' || this.t < 2.2) && !this.endless && this.mode !== 'title') {
+        art.drawGoal(ctx, sx(2.5), sy(this._platY(lvl.platforms[0])), u * 0.7, this.t, false);
+      }
       for (const o of lvl.obstacles) {
         if (o.x < camX - 2 || o.x > camX + this._viewW + 2) continue;
         art.drawObstacle(ctx, o, sx(o.x), sy(o.y), u, this.t);
@@ -641,6 +689,14 @@ export class Game {
 
     // particles
     for (const p of this.particles) {
+      if (p.type === 'coinfly') {
+        // fish coin flying up to the HUD counter (screen-space, eased)
+        if (p.sx === undefined) { p.sx = sx(p.x); p.sy = sy(p.y); }
+        const e = p.k * p.k * (3 - 2 * p.k);
+        const fx2 = p.sx + (W - 84 - p.sx) * e, fy2 = p.sy + (34 - p.sy) * e;
+        art.drawCoin(ctx, fx2, fy2, u * (1 - 0.5 * e), this.t, false, 3);
+        continue;
+      }
       const a = Math.max(0, p.life / p.max);
       const x = sx(p.x), y = sy(p.y);
       ctx.globalAlpha = a;
@@ -667,24 +723,24 @@ export class Game {
       ctx.globalAlpha = 1;
     }
 
-    // moon milk dream overlay
-    if (this.milkT > 0) {
-      const a = Math.min(0.35, this.milkT > 1 ? 0.35 : this.milkT * 0.35);
-      const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.75);
-      g.addColorStop(0, 'rgba(184,166,255,0)');
-      g.addColorStop(1, `rgba(184,166,255,${a})`);
-      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-      if (Math.random() < 0.3) {
-        this.particles.push({ type: 'spark', x: camX + Math.random() * this._viewW, y: camY + Math.random() * this._viewH, vx: 0, vy: -0.3, life: 1, max: 1, color: '#d8ccff' });
-      }
+    // full-screen overlays: gradients cached per canvas size, faded via globalAlpha
+    if (!this._ovl || this._ovlW !== W || this._ovlH !== H) {
+      this._ovlW = W; this._ovlH = H;
+      const mg = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.75);
+      mg.addColorStop(0, 'rgba(184,166,255,0)'); mg.addColorStop(1, 'rgba(184,166,255,0.35)');
+      const pg = ctx.createRadialGradient(W / 2, H / 2, H * 0.25, W / 2, H / 2, H * 0.7);
+      pg.addColorStop(0, 'rgba(255,217,138,0)'); pg.addColorStop(1, 'rgba(255,217,138,0.25)');
+      this._ovl = { mg, pg };
     }
-    // purrfect screen glow
+    if (this.milkT > 0) {
+      ctx.globalAlpha = Math.min(1, this.milkT);
+      ctx.fillStyle = this._ovl.mg; ctx.fillRect(0, 0, W, H);
+      ctx.globalAlpha = 1;
+    }
     if (this.glowT > 0) {
-      const a = this.glowT * 0.5;
-      const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.25, W / 2, H / 2, H * 0.7);
-      g.addColorStop(0, 'rgba(255,217,138,0)');
-      g.addColorStop(1, `rgba(255,217,138,${a * 0.5})`);
-      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      ctx.globalAlpha = this.glowT;
+      ctx.fillStyle = this._ovl.pg; ctx.fillRect(0, 0, W, H);
+      ctx.globalAlpha = 1;
     }
   }
 }
