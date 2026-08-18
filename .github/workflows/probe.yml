@@ -1,0 +1,20 @@
+name: probe-url
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: URL to probe
+        required: true
+        type: string
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe URL as an anonymous visitor
+        run: |
+          echo "PROBING: ${{ inputs.url }}"
+          code=$(curl -s -o body.html -w '%{http_code}' -L --max-time 30 "${{ inputs.url }}")
+          echo "HTTP_STATUS: $code"
+          echo "BODY_HEAD: $(head -c 300 body.html | tr '\n' ' ')"
+          echo "TITLE: $(grep -o '<title>[^<]*</title>' body.html | head -1)"
