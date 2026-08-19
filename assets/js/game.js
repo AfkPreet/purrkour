@@ -58,6 +58,9 @@ export class Game {
     this.mode = fresh ? 'ready' : 'play';
     this.readyT = 0;
     this.t = 0;
+    // re-roll the purr alignment every attempt: position is a pure function of level
+    // time, so without this a muted game replays identical purr phases at every gap
+    this.purrSeed = Math.random() * 7;
     for (const p of this.level.platforms) { p.crumbleT = -1; p.fallY = 0; }
     for (const c of this.level.coins) { c.taken = false; c.hinted = false; c.fx = 0; c.fy = 0; c.dx = 0; c.dy = 0; }
     for (const o of this.level.obstacles) { o.hit = false; o.hitT = 0; }
@@ -92,7 +95,7 @@ export class Game {
   purrInfo(back = 0) {
     const clock = this.audio.purrClock();
     const bpm = clock ? clock.bpm : this.district.bpm;
-    const t = (clock ? clock.t : this.t) - back;
+    const t = (clock ? clock.t : this.t + (this.purrSeed || 0)) - back;
     const P = purrPeriod(bpm);
     const tc = ((t % P) + P) % P;
     const phase = 0.5 - 0.5 * Math.cos((2 * Math.PI * t) / P);
