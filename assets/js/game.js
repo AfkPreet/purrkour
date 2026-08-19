@@ -460,6 +460,8 @@ export class Game {
   }
 
   _checkSpray(p, c, dt) {
+    // the flutter only slows Mochi's run - a pounce in flight is never weakened
+    if (!c.grounded) return;
     if (!p.sprinkler || c.sprayT > 0 || c.invuln > 0) return;
     const s = p.sprinkler;
     const active = (this.t % s.period) < s.period * s.duty;
