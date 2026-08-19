@@ -145,7 +145,7 @@ export class Game {
     else { const info = this.purrJudge(); purrfect = info.purrfect; f = purrfect ? PHYS.purrfectPow : powerFor(info.phase); }
     c.vy = -jumpVel(f);
     c.grounded = false; c.plat = null; c.coyote = 0; c.diving = false;
-    c.stumbleT = 0; // shake it off
+    c.stumbleT = 0; c.sprayT = 0; // shake it off - a pounce always flies at full strength
     c.squashV = -6;
     this.audio.pounce(f);
     this._burst(c.x, c.y, 5, 'dust');
