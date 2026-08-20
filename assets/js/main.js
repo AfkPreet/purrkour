@@ -43,6 +43,7 @@ const game = new Game(audio, {
     if (pct === lastPct) return;
     lastPct = pct;
     $('moonbar-fill').style.width = `${pct}%`;
+    $('moonbar').classList.toggle('near', pct >= 85); // the window ahead starts to breathe
   },
   onDistance(m) {
     if (m === lastDist) return;
@@ -98,9 +99,10 @@ function startLevel(i, fresh = true) {
   screen = 'play'; paused = false;
   game.skin = skinById(save.skin);
   game.startLevel(i, fresh);
-  $('level-chip').textContent = `${i + 1} - ${LEVEL_NAMES[i]}`;
+  $('level-chip').innerHTML = `<b>${i + 1}</b><span>${LEVEL_NAMES[i]}</span>`;
   $('coin-count').textContent = '0';
   $('moonbar-fill').style.width = '0%';
+  $('moonbar').classList.remove('near');
   hide('dist-chip'); show('hud'); $('moonbar').classList.remove('hidden');
   audio.startMusic(Math.min(3, Math.floor(i / 5)));
 }
@@ -113,7 +115,7 @@ function startEndless(fresh = true) {
   lastDist = -1;
   game.skin = skinById(save.skin);
   game.startEndless(fresh);
-  $('level-chip').textContent = STR.endlessName;
+  $('level-chip').innerHTML = `<b>&#8734;</b><span>${STR.endlessName}</span>`;
   $('coin-count').textContent = '0';
   $('moonbar').classList.add('hidden');
   show('hud'); show('dist-chip'); $('dist-chip').textContent = '0 m';
@@ -224,6 +226,7 @@ function openMap() {
     list.appendChild(dh);
     const row = document.createElement('div');
     row.className = 'node-row';
+    row.style.setProperty('--acc', DISTRICTS[d].accent);
     for (let k = 0; k < 5; k++) {
       const i = d * 5 + k;
       const node = document.createElement('button');
@@ -265,8 +268,13 @@ function openShop() {
     const card = document.createElement('div');
     card.className = 'skin-card' + (wearing ? ' wearing' : '');
     const cv = document.createElement('canvas');
-    cv.width = cv.height = 96; cv.className = 'portrait';
-    drawCatPortrait(cv.getContext('2d'), 96, s);
+    const pd = Math.min(3, window.devicePixelRatio || 1); // crisp on retina phones
+    cv.width = cv.height = Math.round(64 * pd);
+    cv.className = 'portrait';
+    cv.style.boxShadow = `inset 0 0 0 2px ${s.scarf}55`;
+    const pctx = cv.getContext('2d');
+    pctx.setTransform(pd, 0, 0, pd, 0, 0);
+    drawCatPortrait(pctx, 64, s);
     card.appendChild(cv);
     const info = document.createElement('div');
     info.className = 'skin-info';
@@ -274,7 +282,7 @@ function openShop() {
     card.appendChild(info);
     const btn = document.createElement('button');
     btn.className = 'skin-btn' + (wearing ? ' active' : owned ? '' : ' buy');
-    btn.textContent = wearing ? STR.wearing : owned ? STR.wear : `${STR.unlock} ${s.price}`;
+    btn.textContent = wearing ? STR.wearing : owned ? STR.wear : `${STR.unlock} · \u{1F41F}${s.price}`;
     btn.addEventListener('click', () => {
       audio.unlock();
       if (wearing) return;
@@ -286,7 +294,7 @@ function openShop() {
         audio.denied();
         btn.textContent = STR.poor;
         btn.classList.add('wobble');
-        setTimeout(() => { btn.classList.remove('wobble'); btn.textContent = `${STR.unlock} ${s.price}`; }, 1100);
+        setTimeout(() => { btn.classList.remove('wobble'); btn.textContent = `${STR.unlock} · \u{1F41F}${s.price}`; }, 1100);
       }
     });
     card.appendChild(btn);

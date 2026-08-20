@@ -17,6 +17,7 @@ export class Game {
     this.floats = [];
     this.shakeT = 0;
     this.glowT = 0;
+    this.purrfectFlash = 0;
     this.startTitle();
   }
 
@@ -29,6 +30,7 @@ export class Game {
     this.cat = this._newCat(2, 0);
     this.cat.loaf = true;
     this.cam = { x: -1.2, y: -6.8 };
+    this.camY0 = this.cam.y;
     this.particles = []; this.floats = [];
   }
 
@@ -70,6 +72,8 @@ export class Game {
     this.cat.plat = p0;
     this.groundY = p0.y;
     this.cam = { x: 1.2 - 3, y: p0.y - 7 };
+    this.camY0 = this.cam.y;
+    this.purrfectFlash = 0;
     this.coinsRun = 0; this.purrfects = 0; this.combo = 0; this.sparkleFound = false;
     this.milkT = 0; this.magnetT = 0; this.bell = false;
     this.particles = []; this.floats = [];
@@ -153,6 +157,7 @@ export class Game {
       this.combo++;
       this.purrfects++;
       this.glowT = 0.5;
+      this.purrfectFlash = 1;
       this.audio.purrfect();
       navigator.vibrate?.(18);
       this._float(c.x, c.y - 2.2, this.combo > 1 ? `PURRFECT! x${this.combo}` : 'PURRFECT!', '#ffd98a');
@@ -187,6 +192,7 @@ export class Game {
     const c = this.cat;
     this.glowT = Math.max(0, this.glowT - dt);
     this.shakeT = Math.max(0, this.shakeT - dt);
+    this.purrfectFlash = Math.max(0, this.purrfectFlash - dt * 3);
     c.blinkTimer -= dt;
     if (c.blinkTimer < 0) { c.blinkTimer = 2.4 + Math.random() * 2.6; c.blink = 1; }
     if (c.blink > 0) c.blink = Math.max(0, c.blink - dt * 8);
@@ -235,12 +241,17 @@ export class Game {
     }
     if (!c.bonked) c.x += (S + wind) * dt;
     if (wind && Math.random() < 0.3) this._spawnStreak(c);
+    const prevPhase = c.runPhase;
     c.runPhase = (c.runPhase + S * dt * 0.55) % 1;
+    // soft toe-puffs on each footfall
+    if (c.grounded && ((prevPhase < 0.5 && c.runPhase >= 0.5) || c.runPhase < prevPhase)) {
+      this.particles.push({ type: 'dust', x: c.x - 0.35, y: c.y - 0.05, vx: -0.5, vy: -0.2, life: 0.32, max: 0.32 });
+    }
 
     // scarf trail
-    if (!c.scarf.length || Math.hypot(c.x - c.scarf[0].x, c.y - c.scarf[0].y) > 0.12) {
+    if (!c.scarf.length || Math.hypot(c.x - c.scarf[0].x, c.y - c.scarf[0].y) > 0.08) {
       c.scarf.unshift({ x: c.x, y: c.y });
-      if (c.scarf.length > 9) c.scarf.pop();
+      if (c.scarf.length > 12) c.scarf.pop();
     }
 
     // platform bookkeeping
@@ -439,6 +450,7 @@ export class Game {
       c.squashV = 8;
       this.audio.boing();
       this._burst(c.x, this._platY(p), 6, 'spark', '#ff9fd0');
+      this._ring(c.x, this._platY(p), '#ff9fd0');
       navigator.vibrate?.(10);
       return;
     }
@@ -447,6 +459,8 @@ export class Game {
     this.groundY = c.y;
     c.squashV = 7; c.earBounce = 1;
     this.audio.pomf(wasDive);
+    // cartoon poof ring, gold while a purrfect combo is alive
+    this._ring(c.x, c.y, this.combo > 0 ? '#ffd98a' : '#f0ebff');
     this._burst(c.x, c.y, wasDive ? 9 : 5, 'dust');
     if (wasDive) {
       c.snapT = PHYS.snapTime;
@@ -492,6 +506,7 @@ export class Game {
   _startFlop() {
     this.mode = 'flop';
     this.flopT = 0;
+    this.cartSquish = 0;
     this.cat.diving = false;
     this.cat.scarf.length = 0;
     this.cat.vy = Math.min(this.cat.vy, 2.5); // ease into the slow-mo tumble
@@ -505,6 +520,7 @@ export class Game {
   _stepFlop(dt) {
     const c = this.cat;
     this.flopT += dt;
+    this.cartSquish = Math.max(0, (this.cartSquish || 0) - dt * 4);
     if (!this.flopLanded) {
       c.rot += dt * 7;
       c.vy = Math.min(6, c.vy + PHYS.g * 0.25 * dt); // dreamy slow-mo fall
@@ -512,9 +528,11 @@ export class Game {
       if (c.y >= this.cartY - 0.7) {
         this.flopLanded = true;
         c.y = this.cartY - 0.7; c.rot = 0;
+        this.cartSquish = 1;
         this.audio.pomf(true);
         this.audio.mew();
         this._burst(c.x, c.y, 10, 'dust');
+        this._ring(c.x, this.cartY - 0.9, '#f0ebff');
         for (let i = 0; i < 3; i++) this._pop(c.x + (i - 1) * 0.5, c.y - 1.2, 'heart');
         navigator.vibrate?.(20);
       }
@@ -594,8 +612,14 @@ export class Game {
   _burst(x, y, n, type, color) {
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2, sp = 0.8 + Math.random() * 2;
-      this.particles.push({ type, x, y: y - 0.15, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 0.8, life: 0.4 + Math.random() * 0.4, max: 0.8, color });
+      // dust skids outward along the roof instead of spraying upward
+      const vx = type === 'dust' ? (Math.random() < 0.5 ? -1 : 1) * (0.8 + Math.random() * 0.8) : Math.cos(a) * sp;
+      const vy = type === 'dust' ? -0.1 - Math.random() * 0.4 : Math.sin(a) * sp - 0.8;
+      this.particles.push({ type, x, y: y - 0.15, vx, vy, life: 0.4 + Math.random() * 0.4, max: 0.8, color });
     }
+  }
+  _ring(x, y, color) {
+    this.particles.push({ type: 'ring', x, y, vx: 0, vy: 0, life: 0.35, max: 0.35, color });
   }
   _trail(c) {
     this.particles.push({ type: 'spark', x: c.x - 0.3, y: c.y - 0.4, vx: -0.5, vy: 0.2, life: 0.5, max: 0.5, color: this.combo >= COMBO_X2 ? `hsl(${(this.t * 300) % 360},90%,70%)` : this.skin.trail });
@@ -622,9 +646,12 @@ export class Game {
     const sx = (wx) => (wx - camX) * u + shake;
     const sy = (wy) => (wy - camY) * u + shake * 0.6;
 
-    art.drawSky(ctx, W, H, this.district, this.t, camX);
-    art.drawSkyline(ctx, W, H, this.district, camX * u, 0);
-    art.drawSkyline(ctx, W, H, this.district, camX * u, 1);
+    const relY = (this.camY0 !== undefined ? this.camY0 - camY : 0) * u;
+    art.drawSky(ctx, W, H, this.district, this.t, camX, relY, this.mode === 'title');
+    art.drawSkyline(ctx, W, H, this.district, camX * u, 2, relY);
+    art.drawSkyline(ctx, W, H, this.district, camX * u, 0, relY);
+    art.drawSkyline(ctx, W, H, this.district, camX * u, 1, relY);
+    art.drawHaze(ctx, W, H, this.district, this.t, camX * u);
 
     const lvl = this.level;
     if (lvl) {
@@ -673,11 +700,31 @@ export class Game {
     }
 
     // flop cart
-    if (this.mode === 'flop') art.drawCart(ctx, sx(this.cartX), sy(this.cartY), u);
+    if (this.mode === 'flop') art.drawCart(ctx, sx(this.cartX), sy(this.cartY), u, this.cartSquish || 0);
+
+    // title screen: the rooftop she loafs on, running in from the left edge
+    if (this.mode === 'title') {
+      const px = sx(this.cat.x), py = sy(this.cat.y);
+      const edge = px + u * 1.7;
+      ctx.fillStyle = '#3f3050';
+      ctx.fillRect(-10, py + u * 0.12, edge + 10, H - py);
+      ctx.fillStyle = 'rgba(20,18,40,0.35)';
+      ctx.fillRect(-10, py + u * 0.26, edge + 10, u * 0.1);
+      ctx.fillStyle = '#ffcf6f'; // one warm window under the eave
+      art.rr(ctx, px - u * 1.9, py + u * 0.75, u * 0.5, u * 0.65, u * 0.08); ctx.fill();
+      ctx.fillStyle = '#8a4a3d';
+      art.rr(ctx, -10, py - u * 0.08, edge + 10, u * 0.34, u * 0.1); ctx.fill();
+      ctx.fillStyle = 'rgba(255,243,220,0.3)';
+      art.rr(ctx, -6, py - u * 0.095, edge + 4, u * 0.05, u * 0.03); ctx.fill();
+      // little chimney at the roof's end
+      ctx.fillStyle = '#6e4038';
+      art.rr(ctx, edge - u * 0.6, py - u * 0.72, u * 0.42, u * 0.68, u * 0.06); ctx.fill();
+      art.rr(ctx, edge - u * 0.66, py - u * 0.8, u * 0.54, u * 0.16, u * 0.05); ctx.fill();
+    }
 
     // the cat
     const c = this.cat;
-    const { phase, purrfect } = this.purrInfo();
+    const { phase } = this.purrInfo();
     const pose = {
       grounded: c.grounded || this.mode === 'clear' || this.mode === 'title',
       vy: c.vy, runPhase: c.runPhase, squash: c.squash,
@@ -686,9 +733,17 @@ export class Game {
       blink: this.mode === 'flop' && this.flopLanded ? 0 : c.blink,
       happy: c.happy > 0 || (this.mode === 'flop' && this.flopLanded),
       purr: this.mode === 'flop' ? 0 : phase,
-      purrfectFlash: purrfect ? 1 : 0,
+      purrfectFlash: this.purrfectFlash,
       earBounce: c.earBounce,
     };
+    if (this.mode === 'flop' && !this.flopLanded) {
+      // spin afterimages while she tumbles
+      for (const [dr, ga] of [[-0.9, 0.08], [-0.45, 0.16]]) {
+        ctx.globalAlpha = ga;
+        art.drawCat(ctx, sx(c.x), sy(c.y), u, { ...pose, rot: c.rot + dr }, this.skin, this.t, null);
+      }
+      ctx.globalAlpha = 1;
+    }
     const scarfScreen = c.scarf.map((p) => ({ x: sx(p.x), y: sy(p.y) }));
     art.drawCat(ctx, sx(c.x), sy(c.y), u, pose, this.skin, this.t, scarfScreen);
     if (this.bell) { // tiny bell on the scarf
@@ -723,21 +778,32 @@ export class Game {
       else if (p.type === 'star') { ctx.fillStyle = p.color; art.starPath(ctx, x, y, u * 0.12); ctx.fill(); }
       else if (p.type === 'firefly') { art.glow(ctx, x, y, u * 0.2, 'rgba(207,232,159,0.9)', a * 0.8); }
       else if (p.type === 'streak') { ctx.strokeStyle = p.color; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + u * 0.8, y); ctx.stroke(); }
+      else if (p.type === 'ring') { // cartoon landing poof
+        const rx = u * (0.25 + (1 - a) * 1.1);
+        ctx.globalAlpha = 0.5 * a;
+        ctx.strokeStyle = p.color || '#f0ebff'; ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.ellipse(x, y, rx, rx * 0.28, 0, 0, Math.PI * 2); ctx.stroke();
+      }
       ctx.globalAlpha = 1;
     }
 
-    // floating texts
+    // floating texts: pinned on screen so rewards never scroll away half-read
     for (const f of this.floats) {
+      if (f.px === undefined) f.px = sx(f.x);
+      const drawX = Math.max(u * 1.7, Math.min(W - u * 1.7, f.px));
       const a = Math.max(0, 1 - f.t / 1.2);
       ctx.globalAlpha = a;
       ctx.font = `700 ${Math.round(u * 0.42)}px 'Baloo 2', sans-serif`;
       ctx.textAlign = 'center';
       ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(20,18,40,0.7)';
-      ctx.strokeText(f.text, sx(f.x), sy(f.y));
+      ctx.strokeText(f.text, drawX, sy(f.y));
       ctx.fillStyle = f.color;
-      ctx.fillText(f.text, sx(f.x), sy(f.y));
+      ctx.fillText(f.text, drawX, sy(f.y));
       ctx.globalAlpha = 1;
     }
+
+    // one quiet grade over the whole frame
+    art.drawGrade(ctx, W, H);
 
     // full-screen overlays: gradients cached per canvas size, faded via globalAlpha
     if (!this._ovl || this._ovlW !== W || this._ovlH !== H) {
